@@ -528,9 +528,17 @@ class DNSAddress(DNSRecord):
 
     """A DNS address record"""
 
-    def __init__(self, name: str, type_: int, class_: int, ttl: int, address: bytes) -> None:
+    def __init__(
+        self, name: str,
+        type_: int,
+        class_: int,
+        ttl: int,
+        address: bytes,
+        scope_id: Optional[int] = None
+    ) -> None:
         DNSRecord.__init__(self, name, type_, class_, ttl)
         self.address = address
+        self.scope_id = scope_id
 
     def write(self, out: 'DNSOutgoing') -> None:
         """Used in constructing an outgoing packet"""
@@ -696,7 +704,7 @@ class DNSIncoming(QuietLogger):
 
     """Object representation of an incoming DNS packet"""
 
-    def __init__(self, data: bytes) -> None:
+    def __init__(self, data: bytes, scope_id: Optional[int] = None) -> None:
         """Constructor from string holding bytes of packet"""
         self.offset = 0
         self.data = data
@@ -709,6 +717,7 @@ class DNSIncoming(QuietLogger):
         self.num_authorities = 0
         self.num_additionals = 0
         self.valid = False
+        self.scope_id = scope_id
 
         try:
             self.read_header()
@@ -815,7 +824,7 @@ class DNSIncoming(QuietLogger):
                     self.read_character_string().decode('utf-8'),
                 )
             elif type_ == _TYPE_AAAA:
-                rec = DNSAddress(domain, type_, class_, ttl, self.read_string(16))
+                rec = DNSAddress(domain, type_, class_, ttl, self.read_string(16), self.scope_id)
             else:
                 # Try to ignore types we don't know about
                 # Skip the payload for the resource record so the next
@@ -1381,6 +1390,9 @@ class Listener(QuietLogger):
             self.log_exception_warning('Error reading from socket %d', socket_.fileno())
             return
 
+        if _v6:
+            log.debug('IPv6 scope_id %d associated to the receiving interface', _v6[1])
+
         if self.data == data:
             log.debug(
                 'Ignoring duplicate message received from %r:%r (socket %d) (%d bytes) as [%r]',
@@ -1393,7 +1405,7 @@ class Listener(QuietLogger):
             return
 
         self.data = data
-        msg = DNSIncoming(data)
+        msg = DNSIncoming(data, _v6[1] if _v6 else None)
         if msg.valid:
             log.debug(
                 'Received from %r:%r (socket %d): %r (%d bytes) as [%r]',
@@ -1445,7 +1457,7 @@ class Reaper(threading.Thread):
         self.name = "zeroconf-Reaper_%s" % (getattr(self, 'native_id', self.ident),)
 
     def run(self) -> None:
-        """Perodic removal of expired entries from the cache."""
+        """Periodic removal of expired entries from the cache."""
         while True:
             with self.zc.reaper_condition:
                 self.zc.reaper_condition.wait(10)
@@ -1744,7 +1756,8 @@ class ServiceInfo(RecordUpdateListener):
     * other_ttl: ttl used for PTR/TXT records
     * addresses and parsed_addresses: List of IP addresses (either as bytes, network byte order, or in parsed
       form as text; at most one of those parameters can be provided)
-
+    * interface_index: scope_id or zone_id for IPv6 link-local addresses i.e. an identifier of the interface
+      where the peer is connected to
     """
 
     text = b''
@@ -1765,7 +1778,8 @@ class ServiceInfo(RecordUpdateListener):
         other_ttl: int = _DNS_OTHER_TTL,
         *,
         addresses: Optional[List[bytes]] = None,
-        parsed_addresses: Optional[List[str]] = None
+        parsed_addresses: Optional[List[str]] = None,
+        interface_index: Optional[int] = None
     ) -> None:
         # Accept both none, or one, but not both.
         if addresses is not None and parsed_addresses is not None:
@@ -1797,6 +1811,7 @@ class ServiceInfo(RecordUpdateListener):
         self._set_properties(properties)
         self.host_ttl = host_ttl
         self.other_ttl = other_ttl
+        self.interface_index = interface_index
     # fmt: on
 
     @property
@@ -1844,6 +1859,23 @@ class ServiceInfo(RecordUpdateListener):
             socket.inet_ntop(socket.AF_INET6 if _is_v6_address(addr) else socket.AF_INET, addr)
             for addr in result
         ]
+
+    def parsed_scoped_addresses(self, version: IPVersion = IPVersion.All) -> List[str]:
+        """ Equivalent to parsed_addresses, with the exception that IPv6 Link-Local
+        addresses are qualified with %<interface_index> when available
+        """
+        if self.interface_index is None:
+            return self.parsed_addresses(version)
+        else:
+            def is_link_local(addr):
+                a = ipaddress.ip_address(addr)
+                return a.version == 6 and a.is_link_local
+
+            ll_addrs = list(filter(is_link_local, self.parsed_addresses(version)))
+            other_addrs = list(filter(lambda addr: not is_link_local(addr), self.parsed_addresses(version)))
+            return ["["+i+"%"+j+"]"
+                    for (i, j) in zip(ll_addrs, [str(self.interface_index)]*len(ll_addrs))
+                    ] + other_addrs
 
     def _set_properties(self, properties: Union[bytes, Dict]) -> None:
         """Sets properties and text of this info from a dictionary"""
@@ -1910,6 +1942,9 @@ class ServiceInfo(RecordUpdateListener):
                 if record.name == self.server:
                     if record.address not in self._addresses:
                         self._addresses.append(record.address)
+                        if record.type is _TYPE_AAAA and \
+                                ipaddress.IPv6Address(record.address).is_link_local:
+                            self.interface_index = record.scope_id
             elif record.type == _TYPE_SRV:
                 assert isinstance(record, DNSService)
                 if record.name == self.name:
@@ -2005,6 +2040,7 @@ class ServiceInfo(RecordUpdateListener):
                     'priority',
                     'server',
                     'properties',
+                    'interface_index',
                 )
             ),
         )
