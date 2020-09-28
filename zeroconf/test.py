@@ -370,7 +370,7 @@ class Names(unittest.TestCase):
         longest_packet_len = 0
         longest_packet = None  # type: Optional[r.DNSOutgoing]
 
-        def send(out, addr=r._MDNS_ADDR, port=r._MDNS_PORT):
+        def send(out, addr=r._MDNS_ADDR, port=r._MDNS_PORT, _v6=None):
             """Sends an outgoing packet."""
             for packet in out.packets():
                 nonlocal longest_packet_len, longest_packet
@@ -784,7 +784,7 @@ class TestRegistrar(unittest.TestCase):
             else:
                 return r._DNS_OTHER_TTL
 
-        def send(out, addr=r._MDNS_ADDR, port=r._MDNS_PORT):
+        def send(out, addr=r._MDNS_ADDR, port=r._MDNS_PORT, _v6=None):
             """Sends an outgoing packet."""
             nonlocal nbr_answers, nbr_additionals, nbr_authorities
 
@@ -1333,7 +1333,7 @@ class TestServiceInfo(unittest.TestCase):
 
         last_sent = None  # type: Optional[r.DNSOutgoing]
 
-        def send(out, addr=r._MDNS_ADDR, port=r._MDNS_PORT):
+        def send(out, addr=r._MDNS_ADDR, port=r._MDNS_PORT, _v6=None):
             """Sends an outgoing packet."""
             nonlocal last_sent
 
@@ -1459,7 +1459,7 @@ class TestServiceInfo(unittest.TestCase):
 
         last_sent = None  # type: Optional[r.DNSOutgoing]
 
-        def send(out, addr=r._MDNS_ADDR, port=r._MDNS_PORT):
+        def send(out, addr=r._MDNS_ADDR, port=r._MDNS_PORT, _v6=None):
             """Sends an outgoing packet."""
             nonlocal last_sent
 
@@ -1648,7 +1648,7 @@ def test_backoff():
         """Current system time in milliseconds"""
         return start_time + time_offset * 1000
 
-    def send(out, addr=r._MDNS_ADDR, port=r._MDNS_PORT):
+    def send(out, addr=r._MDNS_ADDR, port=r._MDNS_PORT, _v6=None):
         """Sends an outgoing packet."""
         got_query.set()
         old_send(out, addr=addr, port=port)
@@ -1730,7 +1730,7 @@ def test_integration():
 
     nbr_answers = 0
 
-    def send(out, addr=r._MDNS_ADDR, port=r._MDNS_PORT):
+    def send(out, addr=r._MDNS_ADDR, port=r._MDNS_PORT, _v6=None):
         """Sends an outgoing packet."""
         pout = r.DNSIncoming(out.packet())
         nonlocal nbr_answers
@@ -1872,7 +1872,7 @@ def test_ptr_optimization():
     nbr_answers = nbr_additionals = nbr_authorities = 0
     has_srv = has_txt = has_a = False
 
-    def send(out, addr=r._MDNS_ADDR, port=r._MDNS_PORT):
+    def send(out, addr=r._MDNS_ADDR, port=r._MDNS_PORT, _v6=None):
         """Sends an outgoing packet."""
         nonlocal nbr_answers, nbr_additionals, nbr_authorities
         nonlocal has_srv, has_txt, has_a

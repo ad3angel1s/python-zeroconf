@@ -1437,7 +1437,10 @@ class Listener(QuietLogger):
             # If it's not a multicast query, reply via unicast
             # and multicast
             elif port == _DNS_PORT:
-                self.zc.handle_query(msg, addr, port)
+                self.zc.handle_query(msg,
+                                     addr,
+                                     port,
+                                     _v6 if _v6 and ipaddress.IPv6Address(addr).is_link_local else None)
                 self.zc.handle_query(msg, None, _MDNS_PORT)
 
         else:
@@ -2764,7 +2767,12 @@ class Zeroconf(QuietLogger):
                 if entry_to_remove:
                     self.cache.remove(entry_to_remove)
 
-    def handle_query(self, msg: DNSIncoming, addr: Optional[str], port: int) -> None:
+    def handle_query(
+        self, msg: DNSIncoming,
+        addr: Optional[str],
+        port: int,
+        _v6: Optional[Tuple[int, int]] = None
+    ) -> None:
         """Deal with incoming query packets.  Provides a response if
         possible."""
         out = None
@@ -2900,9 +2908,14 @@ class Zeroconf(QuietLogger):
 
         if out is not None and out.answers:
             out.id = msg.id
-            self.send(out, addr, port)
+            self.send(out, addr, port, _v6)
 
-    def send(self, out: DNSOutgoing, addr: Optional[str] = None, port: int = _MDNS_PORT) -> None:
+    def send(
+        self, out: DNSOutgoing,
+        addr: Optional[str] = None,
+        port: int = _MDNS_PORT,
+        _v6: Optional[Tuple[int, int]] = None
+    ) -> None:
         """Sends an outgoing packet."""
         packets = out.packets()
         packet_num = 0
@@ -2922,7 +2935,7 @@ class Zeroconf(QuietLogger):
                         continue
                     else:
                         real_addr = addr
-                    bytes_sent = s.sendto(packet, 0, (real_addr, port))
+                    bytes_sent = s.sendto(packet, 0, (real_addr, port, *_v6) if _v6 else (real_addr, port))
                 except Exception as exc:  # TODO stop catching all Exceptions
                     if (
                         isinstance(exc, OSError)
