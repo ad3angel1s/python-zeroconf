@@ -740,6 +740,7 @@ class TestDnsIncoming(unittest.TestCase):
         packed = socket.inet_pton(socket.AF_INET6, addr)
         generated = r.DNSOutgoing(0)
         answer = r.DNSAddress('domain', r._TYPE_AAAA, r._CLASS_IN | r._CLASS_UNIQUE, 1, packed)
+        assert answer.scope_id == None
         generated.add_additional_answer(answer)
         packet = generated.packet()
         parsed = r.DNSIncoming(packet)
@@ -747,6 +748,19 @@ class TestDnsIncoming(unittest.TestCase):
         assert isinstance(record, r.DNSAddress)
         assert record.address == packed
 
+    def test_incoming_ipv6_link_local(self):
+        addr = "fe80::52e:c2f2:bc5f:e9c6"  # IPv6 link local address
+        scope_id = 12
+        packed = socket.inet_pton(socket.AF_INET6, addr)
+        generated = r.DNSOutgoing(0)
+        answer = r.DNSAddress('domain', r._TYPE_AAAA, r._CLASS_IN | r._CLASS_UNIQUE, 1, packed, scope_id)
+        assert answer.scope_id == scope_id
+        generated.add_additional_answer(answer)
+        packet = generated.packet()
+        parsed = r.DNSIncoming(packet)
+        record = parsed.answers[0]
+        assert isinstance(record, r.DNSAddress)
+        assert record.address == packed
 
 class TestRegistrar(unittest.TestCase):
     def test_ttl(self):
@@ -1849,6 +1863,77 @@ def test_multiple_addresses():
             assert info.parsed_addresses() == [address_parsed, address_v6_parsed]
             assert info.parsed_addresses(r.IPVersion.V4Only) == [address_parsed]
             assert info.parsed_addresses(r.IPVersion.V6Only) == [address_v6_parsed]
+            assert info.parsed_scoped_addresses() == [address_parsed, address_v6_parsed]
+            assert info.parsed_scoped_addresses(r.IPVersion.V4Only) == [address_parsed]
+            assert info.parsed_scoped_addresses(r.IPVersion.V6Only) == [address_v6_parsed]
+
+def test_multiple_addresses_with_ipv6_link_local():
+    type_ = "_http._tcp.local."
+    registration_name = "xxxyyy.%s" % type_
+    desc = {'path': '/~paulsm/'}
+    address_parsed = "10.0.1.2"
+    address = socket.inet_aton(address_parsed)
+
+    # New kwarg way
+    info = ServiceInfo(type_, registration_name, 80, 0, 0, desc, "ash-2.local.", addresses=[address, address])
+
+    assert info.addresses == [address, address]
+
+    info = ServiceInfo(
+        type_,
+        registration_name,
+        80,
+        0,
+        0,
+        desc,
+        "ash-2.local.",
+        parsed_addresses=[address_parsed, address_parsed],
+    )
+    assert info.addresses == [address, address]
+
+    if socket.has_ipv6 and not os.environ.get('SKIP_IPV6'):
+        address_v6_parsed = "2001:db8::1"
+        address_v6 = socket.inet_pton(socket.AF_INET6, address_v6_parsed)
+        address_v6_ll_parsed = "fe80::52e:c2f2:bc5f:e9c6"
+        address_v6_ll = socket.inet_pton(socket.AF_INET6, address_v6_ll_parsed)
+        interface_index = 12
+        infos = [
+            ServiceInfo(
+                type_,
+                registration_name,
+                80,
+                0,
+                0,
+                desc,
+                "ash-2.local.",
+                addresses=[address, address_v6, address_v6_ll],
+                interface_index=interface_index,
+            ),
+            ServiceInfo(
+                type_,
+                registration_name,
+                80,
+                0,
+                0,
+                desc,
+                "ash-2.local.",
+                parsed_addresses=[address_parsed, address_v6_parsed, address_v6_ll_parsed],
+                interface_index=interface_index,
+            ),
+        ]
+        for info in infos:
+            assert info.addresses == [address]
+            assert info.addresses_by_version(r.IPVersion.All) == [address, address_v6, address_v6_ll]
+            assert info.addresses_by_version(r.IPVersion.V4Only) == [address]
+            assert info.addresses_by_version(r.IPVersion.V6Only) == [address_v6, address_v6_ll]
+            assert info.parsed_addresses() == [address_parsed, address_v6_parsed, address_v6_ll_parsed]
+            assert info.parsed_addresses(r.IPVersion.V4Only) == [address_parsed]
+            assert info.parsed_addresses(r.IPVersion.V6Only) == [address_v6_parsed, address_v6_ll_parsed]
+            assert info.parsed_scoped_addresses() == ["["+address_v6_ll_parsed+"%"+str(info.interface_index)+"]",
+                                                      address_parsed, address_v6_parsed]
+            assert info.parsed_scoped_addresses(r.IPVersion.V4Only) == [address_parsed]
+            assert info.parsed_scoped_addresses(r.IPVersion.V6Only) == [
+                "["+address_v6_ll_parsed+"%"+str(info.interface_index)+"]", address_v6_parsed]
 
 
 def test_ptr_optimization():
